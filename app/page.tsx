@@ -1,65 +1,248 @@
-import Image from "next/image";
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import NavHeader from '@/components/NavHeader'
+import ProjectGallery, { PROJECTS } from '@/components/ProjectGallery'
+import AboutSection from '@/components/AboutSection'
+
+const SB_ITEM_H = 34     // Increased to match text-xl/2xl height + spacing
+const SB_SLOTS = 11      
+const SB_HALF = Math.floor(SB_SLOTS / 2)
+
+function pmod(n: number, m: number) { return ((n % m) + m) % m }
+
+function SidebarDrum({ activeIndex }: { activeIndex: number }) {
+  // Continuous position that lerps toward activeIndex
+  const posRef = useRef(activeIndex)
+  const targetRef = useRef(activeIndex)
+  const rafRef = useRef<number | null>(null)
+  const slotRefs = useRef<(HTMLSpanElement | null)[]>([])
+
+  const paint = () => {
+    const pos = posRef.current
+    const centre = Math.round(pos)
+    for (let s = 0; s < SB_SLOTS; s++) {
+      const el = slotRefs.current[s]
+      if (!el) continue
+      const offset = s - SB_HALF
+      const projIdx = pmod(centre + offset, PROJECTS.length)
+      const dist = Math.abs(pos - centre + offset)
+      // Translate slot to its position relative to centre
+      const y = (offset - (pos - centre)) * SB_ITEM_H
+      el.style.transform = `translateY(${y}px)`
+      el.style.color = dist < 0.3 ? '#FF6B00' : '#999'
+      el.style.fontWeight = dist < 0.3 ? '700' : '600'
+      el.style.opacity = dist > SB_HALF - 0.5 ? '0' : '1'
+      el.textContent = PROJECTS[projIdx].name
+      
+      // Matched with text-xl md:text-2xl from categories/services
+      el.className = `text-xl md:text-2xl transition-colors duration-300 whitespace-nowrap absolute left-0 right-0 text-left`
+    }
+  }
+
+  const tick = () => {
+    const diff = targetRef.current - posRef.current
+    if (Math.abs(diff) < 0.005) {
+      posRef.current = targetRef.current
+      paint()
+      rafRef.current = null
+      return
+    }
+    posRef.current += diff * 0.12
+    paint()
+    rafRef.current = requestAnimationFrame(tick)
+  }
+
+  useEffect(() => {
+    // Always take the shortest circular path
+    const cur = posRef.current
+    const n = PROJECTS.length
+    let delta = ((activeIndex - cur) % n + n) % n
+    if (delta > n / 2) delta -= n
+    targetRef.current = cur + delta
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(tick)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex])
+
+  useEffect(() => { paint() }, [])
+
+  return (
+    <div style={{
+      position: 'relative',
+      height: SB_ITEM_H,
+      overflow: 'visible',
+      pointerEvents: 'none',
+    }}>
+      {Array.from({ length: SB_SLOTS }, (_, s) => (
+        <span
+          key={s}
+          ref={el => { slotRefs.current[s] = el }}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            lineHeight: `${SB_ITEM_H}px`,
+            whiteSpace: 'nowrap',
+            cursor: 'default',
+            transition: 'color 0.2s ease',
+            willChange: 'transform',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
 
 export default function Home() {
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [showWorkText, setShowWorkText] = useState(true)
+  const [isAbout, setIsAbout] = useState(false)
+
+  const activeProject = PROJECTS[activeIndex]
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <>
+      {/* <LoadingScreen onComplete={() => setLoaded(true)} /> */}
+
+      <div>
+        <NavHeader 
+          onWorkClick={() => {
+            setShowWorkText(!showWorkText)
+            if (isAbout) setIsAbout(false)
+          }} 
+          isAbout={isAbout}
+          onAboutClick={() => {
+            setIsAbout(!isAbout)
+            if (showWorkText) setShowWorkText(false)
+          }}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+
+        {/* Main canvas */}
+        <main style={{ position: 'relative', width: '100vw' }}>
+
+          {/* ── Left sidebar: project name drum ── */}
+          <aside style={{
+            position: 'fixed',
+            left: 28,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 50,
+            opacity: isAbout ? 0 : 1,
+            transition: 'opacity 0.6s ease',
+          }}>
+            <SidebarDrum activeIndex={activeIndex} />
+          </aside>
+
+          {/* ── Center: scroll gallery ── */}
+          <div style={{ marginLeft: 0 }}>
+            <ProjectGallery
+              setActiveIndex={setActiveIndex}
+              isAbout={isAbout}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+          </div>
+
+          {/* ── Center-left label (categories) ── */}
+          <div style={{
+            position: 'fixed',
+            left: '50%',
+            top: '50%',
+            transform: 'translate(calc(-50% - 450px), -50%)',
+            zIndex: 50,
+            textAlign: 'left',
+            opacity: isAbout ? 0 : 1,
+            transition: 'opacity 0.6s ease',
+          }}>
+            <span className="text-xl md:text-2xl font-medium tracking-tight text-[#FF6B00]">
+              {activeProject.categories.join(', ')}
+            </span>
+          </div>
+
+          {/* ── Center-right label (services) + project number ── */}
+          <div style={{
+            position: 'fixed',
+            right: 28,
+            top: '50%',
+            transform: 'translateY(-50%)', // Aligned with center axis
+            zIndex: 50,
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 40,
+            opacity: isAbout ? 0 : 1,
+            transition: 'opacity 0.6s ease',
+          }}>
+            <span className="text-xl md:text-2xl font-medium tracking-tight text-[#FF6B00]">
+              {activeProject.services.join(', ')}
+            </span>
+            <span className="text-xl md:text-2xl font-medium text-[#FF6B00] min-w-[24px] text-right">
+              {activeProject.id}
+            </span>
+          </div>
+
+          {/* ── Bracket decorations (left [ and right ]) ── */}
+          <div style={{ opacity: isAbout ? 0 : 1, transition: 'opacity 0.6s ease' }}>
+            <BracketLeft />
+            <BracketRight />
+          </div>
+
+          {/* ── Bottom bar ── */}
+          <footer style={{
+            position: 'fixed',
+            bottom: 18,
+            left: 28,
+            right: 28,
+            zIndex: 50,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            opacity: isAbout ? 0 : 1,
+            transition: 'opacity 0.6s ease',
+          }}>
+            <span style={{ fontSize: 11, color: '#bbb', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+              Vertical, Horizontal, Grid
+            </span>
+            <span style={{ fontSize: 11, color: '#bbb' }}>
+              All rights reserved. ©2026 Intelium
+            </span>
+          </footer>
+        </main>
+
+        <AboutSection isVisible={isAbout} showStudioInfo={showWorkText || isAbout} />
+      </div>
+    </>
+  )
+}
+
+function BracketLeft() {
+  return (
+    <div style={{
+      position: 'fixed',
+      left: 'calc(50% - 236px)',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      zIndex: 50,
+      pointerEvents: 'none',
+    }}>
+      <svg width="60" height="340" viewBox="0 0 60 340" fill="none">
+        <path d="M 50 10 Q 10 170 50 330" stroke="#000" strokeWidth="1.5" fill="none" />
+      </svg>
     </div>
-  );
+  )
+}
+
+function BracketRight() {
+  return (
+    <div style={{
+      position: 'fixed',
+      right: 'calc(50% - 246px)',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      zIndex: 50,
+      pointerEvents: 'none',
+    }}>
+      <svg width="60" height="340" viewBox="0 0 60 340" fill="none">
+        <path d="M 10 10 Q 50 170 10 330" stroke="#000" strokeWidth="1.5" fill="none" />
+      </svg>
+    </div>
+  )
 }
