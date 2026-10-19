@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react'
 
-export default function NavHeader({ onWorkClick, isAbout, onAboutClick }: { 
-  onWorkClick?: () => void, 
-  isAbout?: boolean, 
-  onAboutClick?: () => void 
+export default function NavHeader({ onWorkClick, isAbout, onAboutClick, revealed = true }: {
+  onWorkClick?: () => void,
+  isAbout?: boolean,
+  onAboutClick?: () => void,
+  revealed?: boolean,
 }) {
   const [time, setTime] = useState('')
 
@@ -35,6 +36,10 @@ export default function NavHeader({ onWorkClick, isAbout, onAboutClick }: {
       alignItems: 'start',
       padding: '2.4rem 2.8rem', // Adjusted to match the airy feel
       pointerEvents: 'none',
+      // Slides in once the intro hands off
+      opacity: revealed ? 1 : 0,
+      transform: revealed ? 'translateY(0)' : 'translateY(-2rem)',
+      transition: 'opacity 0.8s ease, transform 1.2s cubic-bezier(0.16, 1, 0.3, 1)',
     }}>
       {/* Left: Brand */}
       <a id="header-title" href="/" style={{ pointerEvents: 'auto' }}>

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import NavHeader from '@/components/NavHeader'
 import ProjectGallery, { PROJECTS } from '@/components/ProjectGallery'
 import AboutSection from '@/components/AboutSection'
+import LoadingScreen from '@/components/LoadingScreen'
 
 const SB_ITEM_H = 34     // Increased to match text-xl/2xl height + spacing
 const SB_SLOTS = 11      
@@ -98,15 +99,19 @@ export default function Home() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [showWorkText, setShowWorkText] = useState(true)
   const [isAbout, setIsAbout] = useState(false)
+  const [introDone, setIntroDone] = useState(false)
 
   const activeProject = PROJECTS[activeIndex]
+  const chromeOn = introDone && !isAbout
 
   return (
     <>
-      {/* <LoadingScreen onComplete={() => setLoaded(true)} /> */}
+      {/* Intro; its mark stays on as the bracket frame around the centred card */}
+      <LoadingScreen onComplete={() => setIntroDone(true)} frameHidden={isAbout} />
 
       <div>
-        <NavHeader 
+        <NavHeader
+          revealed={introDone}
           onWorkClick={() => {
             setShowWorkText(!showWorkText)
             if (isAbout) setIsAbout(false)
@@ -128,7 +133,7 @@ export default function Home() {
             top: '50%',
             transform: 'translateY(-50%)',
             zIndex: 50,
-            opacity: isAbout ? 0 : 1,
+            opacity: chromeOn ? 1 : 0,
             transition: 'opacity 0.6s ease',
           }}>
             <SidebarDrum activeIndex={activeIndex} />
@@ -139,6 +144,8 @@ export default function Home() {
             <ProjectGallery
               setActiveIndex={setActiveIndex}
               isAbout={isAbout}
+              hidden={!introDone}
+              locked={!introDone}
             />
           </div>
 
@@ -150,7 +157,7 @@ export default function Home() {
             transform: 'translate(calc(-50% - 450px), -50%)',
             zIndex: 50,
             textAlign: 'left',
-            opacity: isAbout ? 0 : 1,
+            opacity: chromeOn ? 1 : 0,
             transition: 'opacity 0.6s ease',
           }}>
             <span className="text-xl md:text-2xl font-medium tracking-tight text-[#FF6B00]">
@@ -168,7 +175,7 @@ export default function Home() {
             display: 'flex',
             alignItems: 'baseline',
             gap: 40,
-            opacity: isAbout ? 0 : 1,
+            opacity: chromeOn ? 1 : 0,
             transition: 'opacity 0.6s ease',
           }}>
             <span className="text-xl md:text-2xl font-medium tracking-tight text-[#FF6B00]">
@@ -177,12 +184,6 @@ export default function Home() {
             <span className="text-xl md:text-2xl font-medium text-[#FF6B00] min-w-[24px] text-right">
               {activeProject.id}
             </span>
-          </div>
-
-          {/* ── Bracket decorations (left [ and right ]) ── */}
-          <div style={{ opacity: isAbout ? 0 : 1, transition: 'opacity 0.6s ease' }}>
-            <BracketLeft />
-            <BracketRight />
           </div>
 
           {/* ── Bottom bar ── */}
@@ -195,7 +196,7 @@ export default function Home() {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            opacity: isAbout ? 0 : 1,
+            opacity: chromeOn ? 1 : 0,
             transition: 'opacity 0.6s ease',
           }}>
             <span style={{ fontSize: 11, color: '#bbb', textDecoration: 'underline', textUnderlineOffset: 3 }}>
@@ -207,42 +208,8 @@ export default function Home() {
           </footer>
         </main>
 
-        <AboutSection isVisible={isAbout} showStudioInfo={showWorkText || isAbout} />
+        <AboutSection isVisible={isAbout} showStudioInfo={introDone && (showWorkText || isAbout)} />
       </div>
     </>
-  )
-}
-
-function BracketLeft() {
-  return (
-    <div style={{
-      position: 'fixed',
-      left: 'calc(50% - 236px)',
-      top: '50%',
-      transform: 'translateY(-50%)',
-      zIndex: 50,
-      pointerEvents: 'none',
-    }}>
-      <svg width="60" height="340" viewBox="0 0 60 340" fill="none">
-        <path d="M 50 10 Q 10 170 50 330" stroke="#000" strokeWidth="1.5" fill="none" />
-      </svg>
-    </div>
-  )
-}
-
-function BracketRight() {
-  return (
-    <div style={{
-      position: 'fixed',
-      right: 'calc(50% - 246px)',
-      top: '50%',
-      transform: 'translateY(-50%)',
-      zIndex: 50,
-      pointerEvents: 'none',
-    }}>
-      <svg width="60" height="340" viewBox="0 0 60 340" fill="none">
-        <path d="M 10 10 Q 50 170 10 330" stroke="#000" strokeWidth="1.5" fill="none" />
-      </svg>
-    </div>
   )
 }

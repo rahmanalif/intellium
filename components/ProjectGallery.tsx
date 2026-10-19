@@ -14,7 +14,7 @@ export interface Project {
   size: 'portrait' | 'landscape' | 'small' | 'large'
 }
 
-const SIZES = {
+export const SIZES = {
   portrait:  { w: 160, h: 240 },
   landscape: { w: 260, h: 160 },
   small:     { w: 260, h: 260 },
@@ -43,11 +43,11 @@ export const PROJECTS: Project[] = [
 ]
 
 const N = PROJECTS.length
-const GAP = 8
+export const GAP = 8
 
 // Precompute center-to-center positions so each pair of adjacent cards has exactly GAP px between edges.
 // POSITIONS[i] = distance from project-0 center to project-i center along the scroll axis.
-const POSITIONS: number[] = new Array(N)
+export const POSITIONS: number[] = new Array(N)
 POSITIONS[0] = 0
 for (let i = 1; i < N; i++) {
   const prev = PROJECTS[i - 1]
@@ -60,7 +60,7 @@ const PERIOD = POSITIONS[N - 1] + (SIZES[PROJECTS[N - 1].size].h + SIZES[PROJECT
 const AVG_STEP = PERIOD / N
 
 const SLOTS = 7
-const HALF = Math.floor(SLOTS / 2)
+export const HALF = Math.floor(SLOTS / 2)
 
 function pmod(n: number, m: number) {
   return ((n % m) + m) % m
@@ -78,51 +78,79 @@ function nearestIdx(normPos: number): number {
   return best
 }
 
+export interface CardLayout {
+  projIdx: number
+  w: number
+  h: number
+  dy: number
+  dist: number
+  scale: number
+  opacity: number
+}
+
+// Where one project's card sits at scroll position `pos`, relative to the viewport centre
+export function cardLayout(projIdx: number, pos: number, centreAbsPos = pos): CardLayout {
+  const { w, h } = SIZES[PROJECTS[projIdx].size]
+
+  // Pick the loop repetition of this project that is closest to centreAbsPos
+  const projAbsPos = POSITIONS[projIdx] + Math.round((centreAbsPos - POSITIONS[projIdx]) / PERIOD) * PERIOD
+  const dy = projAbsPos - pos
+
+  // dist in "average slot" units for scale/opacity
+  const dist = Math.abs(dy) / AVG_STEP
+
+  const scale = Math.max(0.91, 1 - Math.min(dist, 2) * 0.045)
+  const opacity = dist < 0.6 ? 1 : dist < 1.6 ? 1 - (dist - 0.6) * 0.65 : Math.max(0.22, 1 - dist * 0.4)
+
+  return { projIdx, w, h, dy, dist, scale, opacity: Math.max(0.22, opacity) }
+}
+
+// The SLOTS cards drawn around the centre at scroll position `pos`.
+// Shared with the intro so its cards land exactly where the gallery draws them.
+export function galleryLayout(pos: number): CardLayout[] {
+  const normPos = ((pos % PERIOD) + PERIOD) % PERIOD
+  const centreIdx = nearestIdx(normPos)
+
+  // Absolute position of the centred project in scroll space
+  const centreAbsPos = POSITIONS[centreIdx] + Math.round((pos - POSITIONS[centreIdx]) / PERIOD) * PERIOD
+
+  return Array.from({ length: SLOTS }, (_, s) => cardLayout(pmod(centreIdx + (s - HALF), N), pos, centreAbsPos))
+}
+
 interface ProjectGalleryProps {
   setActiveIndex: (i: number) => void
   isAbout?: boolean
+  hidden?: boolean   // kept invisible while the intro draws its own copies of the cards
+  locked?: boolean   // ignore wheel/touch input
 }
 
-export default function ProjectGallery({ setActiveIndex, isAbout }: ProjectGalleryProps) {
+export default function ProjectGallery({ setActiveIndex, isAbout, hidden, locked }: ProjectGalleryProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const slotRefs = useRef<(HTMLDivElement | null)[]>([])
   const posRef = useRef(0)
   const targetRef = useRef(0)
   const rafRef = useRef<number | null>(null)
   const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lockedRef = useRef(!!locked)
+
+  useEffect(() => { lockedRef.current = !!locked }, [locked])
 
   const paint = useCallback(() => {
-    const pos = posRef.current
-    const normPos = ((pos % PERIOD) + PERIOD) % PERIOD
-    const centreIdx = nearestIdx(normPos)
+    const layout = galleryLayout(posRef.current)
 
-    setActiveIndex(centreIdx)
-
-    // Absolute position of the centred project in scroll space
-    const centreAbsPos = POSITIONS[centreIdx] + Math.round((pos - POSITIONS[centreIdx]) / PERIOD) * PERIOD
+    setActiveIndex(layout[HALF].projIdx)
 
     for (let s = 0; s < SLOTS; s++) {
       const el = slotRefs.current[s]
       if (!el) continue
 
-      const projIdx = pmod(centreIdx + (s - HALF), N)
+      const { projIdx, w, h, dy, dist, scale, opacity } = layout[s]
       const project = PROJECTS[projIdx]
-      const { w, h } = SIZES[project.size]
-
-      // Pick the loop repetition of this project that is closest to centreAbsPos
-      const projAbsPos = POSITIONS[projIdx] + Math.round((centreAbsPos - POSITIONS[projIdx]) / PERIOD) * PERIOD
-      const dy = projAbsPos - pos
-
-      // dist in "average slot" units for scale/opacity
-      const dist = Math.abs(dy) / AVG_STEP
-
-      const scale = Math.max(0.91, 1 - Math.min(dist, 2) * 0.045)
-      const opacity = dist < 0.6 ? 1 : dist < 1.6 ? 1 - (dist - 0.6) * 0.65 : Math.max(0.22, 1 - dist * 0.4)
 
       el.style.width = `${w}px`
       el.style.height = `${h}px`
       el.style.transform = `translate(${-(w / 2)}px, calc(${-(h / 2)}px + ${dy}px)) scale(${scale})`
-      el.style.opacity = String(Math.max(0.22, opacity))
+      el.style.opacity = String(opacity)
       el.style.backgroundColor = project.color
 
       const label = el.querySelector<HTMLSpanElement>('.card-label')
@@ -165,6 +193,7 @@ export default function ProjectGallery({ setActiveIndex, isAbout }: ProjectGalle
   }, [tick])
 
   const scroll = useCallback((delta: number) => {
+    if (lockedRef.current) return
     targetRef.current += delta
 
     if (Math.abs(targetRef.current) > PERIOD * 200) {
@@ -245,6 +274,7 @@ export default function ProjectGallery({ setActiveIndex, isAbout }: ProjectGalle
         opacity: isAbout ? 0 : 1,
         transform: isAbout ? 'translateY(-100px)' : 'translateY(0)',
         pointerEvents: isAbout ? 'none' : 'auto',
+        visibility: hidden ? 'hidden' : 'visible',
       }}
     >
       <div className="relative w-0 h-0">

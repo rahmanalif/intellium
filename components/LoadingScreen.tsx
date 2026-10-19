@@ -1,341 +1,380 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import gsap from 'gsap'
+import { useGSAP } from '@gsap/react'
+import { PROJECTS, SIZES, GAP, cardLayout, galleryLayout } from '@/components/ProjectGallery'
+
+gsap.registerPlugin(useGSAP)
+
+// Intro sequence (modelled on obys.agency's preloader):
+//   1. a thin globe — two crescents — draws itself on black
+//   2. the crescents morph into the solid [ ] mark
+//   3. the first project cards grow out of the centre beneath the mark (mix-blend: difference)
+//   4. the cards drop into a column under the mark, the background flips to white
+//   5. the cards fly to their gallery slots while the mark spreads and thins into the ( ) frame
+// The mark stays mounted afterwards as the gallery's bracket frame.
+
+// ── Mark geometry ────────────────────────────────────────────────────────────
+// Drawn in a 400×400 viewBox shown at LOGO_PX. Each half is an outer edge (top → bottom)
+// plus an inner edge (bottom → top), both resampled to EDGE_PTS points, so any two
+// states can be morphed point by point.
+
+type Pt = [number, number]
+interface Half { outer: Pt[]; inner: Pt[] }
+
+const VB = 400
+const C = VB / 2
+const LOGO_PX = 130
+const K = LOGO_PX / VB            // px per viewBox unit
+const EDGE_PTS = 160
+
+function resample(pts: Pt[], n: number): Pt[] {
+  const lens = [0]
+  for (let i = 1; i < pts.length; i++) {
+    lens.push(lens[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+  }
+  const total = lens[lens.length - 1]
+  const out: Pt[] = []
+  let j = 1
+  for (let i = 0; i < n; i++) {
+    const d = (i / (n - 1)) * total
+    while (j < lens.length - 1 && lens[j] < d) j++
+    const t = (d - lens[j - 1]) / (lens[j] - lens[j - 1] || 1)
+    out.push([pts[j - 1][0] + (pts[j][0] - pts[j - 1][0]) * t, pts[j - 1][1] + (pts[j][1] - pts[j - 1][1]) * t])
+  }
+  return out
+}
+
+const curve = (f: (t: number) => Pt, n = 240): Pt[] => Array.from({ length: n + 1 }, (_, i) => f(i / n))
+const half = (outer: Pt[], inner: Pt[]): Half => ({ outer: resample(outer, EDGE_PTS), inner: resample(inner, EDGE_PTS) })
+const mirror = ({ outer, inner }: Half): Half => ({
+  outer: outer.map(([x, y]): Pt => [VB - x, y]),
+  inner: inner.map(([x, y]): Pt => [VB - x, y]),
+})
+
+// 1. Globe: circle + meridian per side, split at the poles with a small gap
+const R = 196
+const TIP = (8 * Math.PI) / 180
+const TIP_X = C - R * Math.sin(TIP)
+const TIP_Y = R * Math.cos(TIP)
+const MERIDIAN_RX = TIP_X - C / 2
+const GLOBE_L = half(
+  curve(t => {
+    const a = -Math.PI / 2 - TIP - t * (Math.PI - 2 * TIP)
+    return [C + R * Math.cos(a), C + R * Math.sin(a)]
+  }),
+  curve(t => {
+    const a = Math.PI / 2 + t * Math.PI
+    return [TIP_X + MERIDIAN_RX * Math.cos(a), C + TIP_Y * Math.sin(a)]
+  }),
+)
+
+// 2. Solid [ ] mark
+const ARM = 150
+const BAR = 48
+const BRACKET_L = half(
+  [[ARM, 0], [0, 0], [0, VB], [ARM, VB]],
+  [[ARM, VB], [ARM, VB - BAR], [BAR, VB - BAR], [BAR, BAR], [ARM, BAR], [ARM, 0]],
+)
+
+// 3. The page's thin ( ) frame — a 1.5px line along a quadratic curve.
+//    Points are in px relative to the viewport centre; side -1 = left half, +1 = right half.
+function frameHalf(p0: Pt, p1: Pt, p2: Pt, side: 1 | -1, width = 1.5): Half {
+  const w = width / 2
+  const at = (t: number) => {
+    const u = 1 - t
+    const x = u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0]
+    const y = u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1]
+    const dx = 2 * u * (p1[0] - p0[0]) + 2 * t * (p2[0] - p1[0])
+    const dy = 2 * u * (p1[1] - p0[1]) + 2 * t * (p2[1] - p1[1])
+    const len = Math.hypot(dx, dy) || 1
+    return { x, y, nx: (side * dy) / len, ny: (side * -dx) / len }
+  }
+  const toUnits = (x: number, y: number): Pt => [C + x / K, C + y / K]
+  return half(
+    curve(t => { const p = at(t); return toUnits(p.x + p.nx * w, p.y + p.ny * w) }),
+    curve(t => { const p = at(1 - t); return toUnits(p.x - p.nx * w, p.y - p.ny * w) }),
+  )
+}
+
+const outline = ({ outer, inner }: Half) => [...outer, ...inner]
+const GLOBE = [GLOBE_L, mirror(GLOBE_L)].map(outline)
+const BRACKET = [BRACKET_L, mirror(BRACKET_L)].map(outline)
+const FRAME = [
+  frameHalf([-186, -160], [-226, 0], [-186, 160], -1),
+  frameHalf([196, -160], [236, 0], [196, 160], 1),
+].map(outline)
+const GLOBE_STROKES = [GLOBE_L, mirror(GLOBE_L)].flatMap(h => [h.outer, h.inner])
+
+const fmt = (n: number) => n.toFixed(1)
+const toPath = (pts: Pt[], close = true) =>
+  'M' + pts.map(([x, y]) => `${fmt(x)} ${fmt(y)}`).join('L') + (close ? 'Z' : '')
+const lerpPath = (a: Pt[], b: Pt[], p: number) =>
+  toPath(a.map(([x, y], i): Pt => [x + (b[i][0] - x) * p, y + (b[i][1] - y) * p]))
+
+const GLOBE_D = GLOBE.map(pts => toPath(pts))
+const FRAME_D = FRAME.map(pts => toPath(pts))
+const STROKE_D = GLOBE_STROKES.map(pts => toPath(pts, false))
+
+// ── Cards ────────────────────────────────────────────────────────────────────
+// The first INTRO_COUNT projects take part in the intro; the other cards visible at
+// scroll position 0 fade in at their final spots during the spread.
+
+const INTRO_COUNT = 6
+const INTRO = PROJECTS.slice(0, INTRO_COUNT).map((_, i) => i)
+const FINAL = galleryLayout(0)
+const GHOSTS = FINAL.filter(c => c.projIdx >= INTRO_COUNT)
+const INTRO_FINAL = INTRO.map(i => FINAL.find(c => c.projIdx === i) ?? cardLayout(i, 0))
+
+// Centre-y of each card when stacked in a column just under the mark
+const COLUMN_Y: number[] = []
+{
+  let top = LOGO_PX / 2 + GAP
+  for (const i of INTRO) {
+    const { h } = SIZES[PROJECTS[i].size]
+    COLUMN_Y.push(top + h / 2)
+    top += h + GAP
+  }
+}
+
+// ── Timing (seconds) ─────────────────────────────────────────────────────────
+
+const DRAW = 1.3
+const MORPH = 1.4
+const GROW = 1.6
+const STAGGER = 0.18
+const HOLD = GROW + (INTRO_COUNT - 1) * STAGGER
+const COLUMN = 1.2
+const FLIP = 0.3
+const SPREAD = 1.6
+
+const T_MORPH = DRAW
+const T_CARDS = T_MORPH + MORPH
+const T_COLUMN = T_CARDS + HOLD
+const T_FLIP = T_COLUMN + COLUMN
+const T_SPREAD = T_FLIP + FLIP
 
 interface LoadingScreenProps {
   onComplete?: () => void
+  frameHidden?: boolean
 }
 
-const NUM_IMAGES = 8
-const IMG_W      = 160
-const IMG_H      = 220
-const IMG_GAP    = 12
-const ITEM_H     = IMG_H + IMG_GAP
-const MAX_SCROLL = ITEM_H * (NUM_IMAGES - 1)
-
-// Ellipse clip dimensions that match the [] bracket interior
-// Bars at SVG x=24/76, arms at SVG y=12/88, displayed at 280px × 1.08 scale
-const CLIP_HW = 79   // half-width  px
-const CLIP_HH = 115  // half-height px
-
-const BG_COLORS = [
-  '#1a1a1a','#262626','#323232','#3e3e3e',
-  '#4a4a4a','#565656','#626262','#6e6e6e',
-]
-
-// ── Arc state descriptors ────────────────────────────────────────────────────
-// Each arc: M x1 y1  Q cx cy  x2 y2
-const OPEN_L = { x1: 50, y1: 12, cx: 15, cy: 50, x2: 50, y2: 88 } // (
-const OPEN_R = { x1: 50, y1: 12, cx: 85, cy: 50, x2: 50, y2: 88 } // )
-const SHUT_L = { x1: 24, y1: 12, cx: 24, cy: 50, x2: 24, y2: 88 } // [
-const SHUT_R = { x1: 76, y1: 12, cx: 76, cy: 50, x2: 76, y2: 88 } // ]
-
-const toD = (s: typeof OPEN_L) =>
-  `M ${s.x1} ${s.y1} Q ${s.cx} ${s.cy} ${s.x2} ${s.y2}`
-
-export default function LoadingScreen({ onComplete }: LoadingScreenProps) {
+export default function LoadingScreen({ onComplete, frameHidden }: LoadingScreenProps) {
+  const [done, setDone] = useState(false)
   const onCompleteRef = useRef(onComplete)
-  onCompleteRef.current = onComplete
+  const bgRef = useRef<HTMLDivElement>(null)
+  const counterRef = useRef<HTMLDivElement>(null)
+  const fillRefs = useRef<(SVGPathElement | null)[]>([])
+  const strokeRefs = useRef<(SVGPathElement | null)[]>([])
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([])
+  const ghostRefs = useRef<(HTMLDivElement | null)[]>([])
 
-  const overlayRef   = useRef<HTMLDivElement>(null)
-  const logoWrapRef  = useRef<HTMLDivElement>(null)
-  const circleRef    = useRef<SVGCircleElement>(null)
-  const arc1Ref      = useRef<SVGPathElement>(null)
-  const arc2Ref      = useRef<SVGPathElement>(null)
-  const topArmRef    = useRef<SVGPathElement>(null)
-  const botArmRef    = useRef<SVGPathElement>(null)
-  const leftHalfRef  = useRef<HTMLDivElement>(null)
-  const rightHalfRef = useRef<HTMLDivElement>(null)
-  const clipViewRef  = useRef<HTMLDivElement>(null)
-  const columnRef    = useRef<HTMLDivElement>(null)
-  const imgWrappers  = useRef<HTMLDivElement[]>([])
-  const hintRef      = useRef<HTMLDivElement>(null)
-  const counterRef   = useRef<HTMLSpanElement>(null)
+  useEffect(() => { onCompleteRef.current = onComplete }, [onComplete])
 
-  useEffect(() => {
-    const overlay   = overlayRef.current!
-    const logoWrap  = logoWrapRef.current!
-    const circle    = circleRef.current!
-    const arc1      = arc1Ref.current!
-    const arc2      = arc2Ref.current!
-    const topArm    = topArmRef.current!
-    const botArm    = botArmRef.current!
-    const leftHalf  = leftHalfRef.current!
-    const rightHalf = rightHalfRef.current!
-    const clipView  = clipViewRef.current!
-    const column    = columnRef.current!
-    const wrappers  = imgWrappers.current
-    const counterEl = counterRef.current!
-    const hint      = hintRef.current!
+  useGSAP(() => {
+    const fills = fillRefs.current as SVGPathElement[]
+    const strokes = strokeRefs.current as SVGPathElement[]
+    const cards = cardRefs.current as HTMLDivElement[]
+    const ghosts = ghostRefs.current as HTMLDivElement[]
+    const counter = counterRef.current!
+    const setShape = (from: Pt[][], to: Pt[][], p: number) =>
+      fills.forEach((el, i) => el.setAttribute('d', lerpPath(from[i], to[i], p)))
 
-    document.body.style.overflow = 'hidden'
-
-    // ── Scroll state ─────────────────────────────────────────────────────────
-    let curY = 0, tgtY = 0
-    let scrollActive = false, revealScheduled = false, revealDone = false
-    let rafId = 0
-
-    // ── Reveal ───────────────────────────────────────────────────────────────
-    function triggerReveal() {
-      if (revealDone) return
-      revealDone = true
-      scrollActive = false
-      cancelAnimationFrame(rafId)
-
-      gsap.set(logoWrap,              { opacity: 0 })
-      gsap.set([leftHalf, rightHalf], { opacity: 1 })
-      gsap.set(hint,                  { opacity: 0 })
-
-      gsap.timeline({
-        onComplete() {
-          overlay.style.visibility    = 'hidden'
-          overlay.style.pointerEvents = 'none'
-          document.body.style.overflow = ''
-          onCompleteRef.current?.()
-        },
-      })
-        .to(leftHalf,  { x: -700, opacity: 0, duration: 1.2, ease: 'power3.inOut' }, 0)
-        .to(rightHalf, { x:  700, opacity: 0, duration: 1.2, ease: 'power3.inOut' }, 0)
-        .to(overlay,   { backgroundColor: '#ffffff', duration: 0.8 }, 0)
-        .to(clipView,  { clipPath: 'ellipse(3000px 3000px at 50% 50%)', duration: 1.2, ease: 'power3.inOut' }, 0)
-        .to(overlay,   { opacity: 0, duration: 0.5 }, 1.2)
+    const finish = () => {
+      setDone(true)
+      onCompleteRef.current?.()
     }
 
-    // ── Scroll loop ───────────────────────────────────────────────────────────
-    function startScrollLoop() {
-      scrollActive = true
-      function tick() {
-        curY += (tgtY - curY) * 0.1
-        gsap.set(column, { y: -curY })
-
-        wrappers.forEach((wrap, i) => {
-          const dist  = Math.abs(i * ITEM_H - curY)
-          const t     = Math.max(0, 1 - dist / ITEM_H)
-          gsap.set(wrap, { scale: 1 + t * 0.2, transformOrigin: 'center center' })
-        })
-
-        if (curY >= MAX_SCROLL - 2 && !revealScheduled) {
-          revealScheduled = true
-          gsap.delayedCall(0.9, triggerReveal)
-        }
-        if (scrollActive) rafId = requestAnimationFrame(tick)
-      }
-      rafId = requestAnimationFrame(tick)
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      finish()
+      return
     }
 
-    // ── Wheel ─────────────────────────────────────────────────────────────────
-    function onWheel(e: WheelEvent) {
-      if (!scrollActive) return
-      e.preventDefault()
-      tgtY = Math.max(0, Math.min(MAX_SCROLL, tgtY + e.deltaY * 0.8))
-    }
-    window.addEventListener('wheel', onWheel, { passive: false })
-
-    // ── Mutable arc state objects (GSAP mutates these in-place) ──────────────
-    const leftState  = { ...OPEN_L }
-    const rightState = { ...OPEN_R }
-
-    const count = { val: 0 }
-    const tl    = gsap.timeline()
-
-    // Phase 1 (0 – 1.5 s): logo draws in
-    tl.fromTo(logoWrap,
-      { scale: 0.3, opacity: 0 },
-      { scale: 1,   opacity: 1, duration: 1.5, ease: 'power2.out' },
-      0,
-    )
-
-    // Counter 0 → 100 over intro
-    tl.to(count, {
-      val: 100, duration: 3.5, ease: 'power1.inOut',
-      onUpdate() { counterEl.textContent = Math.round(count.val).toString() },
-    }, 0)
-
-    // Phase 2 (2 – 3.5 s): () → []
-    // Left arc morphs to left bar
-    tl.to(leftState, {
-      ...SHUT_L,
-      duration: 1.5, ease: 'power2.inOut',
-      onUpdate() { arc1.setAttribute('d', toD(leftState)) },
-    }, 2)
-    // Right arc morphs to right bar
-    tl.to(rightState, {
-      ...SHUT_R,
-      duration: 1.5, ease: 'power2.inOut',
-      onUpdate() { arc2.setAttribute('d', toD(rightState)) },
-    }, 2)
-    // Stroke turns white + thicker
-    tl.to([arc1, arc2], { attr: { stroke: '#ffffff', 'stroke-width': '3' }, duration: 1.5, ease: 'power2.inOut' }, 2)
-    // Circle fades out
-    tl.to(circle,       { attr: { opacity: '0' }, duration: 0.8 }, 2)
-    // Horizontal arms fade in to complete the []
-    tl.to([topArm, botArm], { attr: { opacity: '1' }, duration: 0.5, ease: 'power2.in' }, 3.0)
-    // Slight scale-up
-    tl.to(logoWrap, { scale: 1.08, duration: 1.5, ease: 'power2.inOut' }, 2)
-
-    // Phase 3 (3.5 s): images burst in through a wide clip, then bracket closes
-    tl.set(clipView, { opacity: 1, clipPath: 'ellipse(500px 500px at 50% 50%)' }, 3.5)
-    wrappers.forEach((wrap, i) => {
-      tl.fromTo(wrap,
-        { y: -160, scale: 0.5, opacity: 0 },
-        { y:    0, scale: 1,   opacity: 1, duration: 0.6, ease: 'power3.out' },
-        3.65 + i * 0.16,
-      )
+    // Initial state (set explicitly so a StrictMode re-run starts clean)
+    fills.forEach((el, i) => {
+      el.setAttribute('d', GLOBE_D[i])
+      el.setAttribute('fill-opacity', '0')
+      el.setAttribute('stroke', 'none')
+    })
+    gsap.set(strokes, { attr: { 'stroke-dashoffset': 1 }, opacity: 1 })
+    gsap.set(bgRef.current, { opacity: 1 })
+    gsap.set(counter, { yPercent: 0 })
+    INTRO.forEach((p, i) => {
+      const { w, h } = SIZES[PROJECTS[p].size]
+      gsap.set(cards[i], { x: -w / 2, y: -h / 2, scale: 0, opacity: 1, transformOrigin: '50% 50%' })
+    })
+    GHOSTS.forEach((c, i) => {
+      gsap.set(ghosts[i], { x: -c.w / 2, y: -c.h / 2 + c.dy, scale: c.scale, opacity: 0, transformOrigin: '50% 50%' })
     })
 
-    const burstEnd = 3.65 + (NUM_IMAGES - 1) * 0.16 + 0.6   // ≈ 5.37 s
-
-    // Bracket closes in on the images
-    tl.to(clipView, {
-      clipPath: `ellipse(${CLIP_HW}px ${CLIP_HH}px at 50% 50%)`,
-      duration: 0.7, ease: 'power2.inOut',
-    }, burstEnd + 0.1)
-
-    tl.to(hint,  { opacity: 1, duration: 0.4 }, burstEnd + 0.9)
-    tl.call(startScrollLoop, [],                 burstEnd + 0.9)
-
-    return () => {
-      tl.kill()
-      cancelAnimationFrame(rafId)
-      window.removeEventListener('wheel', onWheel)
-      document.body.style.overflow = ''
+    const count = { v: 0 }
+    const writeCount = () => {
+      const v = Math.min(100, Math.round(count.v))
+      counter.textContent = v < 10 ? `0${v}` : String(v)
     }
+    const morph = { p: 0 }
+    const spread = { p: 0 }
+
+    const tl = gsap.timeline({ onComplete: finish })
+
+    // 1. Globe draws in: outer edges top → bottom, meridians bottom → top
+    tl.to(strokes, { attr: { 'stroke-dashoffset': 0 }, duration: DRAW, ease: 'power4.inOut' }, 0)
+    tl.to(count, { v: 30, duration: DRAW, ease: 'none', onUpdate: writeCount }, 0)
+
+    // 2. Crescents morph into the solid mark; stroke fades out as the fill fades in
+    tl.call(() => {
+      gsap.set(strokes, { opacity: 0 })
+      fills.forEach(el => {
+        el.setAttribute('stroke', 'currentColor')
+        el.setAttribute('stroke-width', '3')
+      })
+    }, [], T_MORPH)
+    tl.to(morph, {
+      p: 1,
+      duration: MORPH,
+      ease: 'expo.inOut',
+      onUpdate: () => {
+        setShape(GLOBE, BRACKET, morph.p)
+        fills.forEach(el => {
+          el.setAttribute('fill-opacity', morph.p.toFixed(3))
+          el.setAttribute('stroke-opacity', (1 - morph.p).toFixed(3))
+        })
+      },
+      onComplete: () => fills.forEach(el => el.setAttribute('stroke', 'none')),
+    }, T_MORPH)
+    tl.to(count, { v: 50, duration: MORPH, ease: 'none', onUpdate: writeCount }, T_MORPH)
+
+    // 3. Cards grow out of the centre, each on top of the last
+    cards.forEach((el, i) => {
+      tl.to(el, { scale: 1, duration: GROW, ease: 'expo.out' }, T_CARDS + i * STAGGER)
+    })
+    tl.to(count, { v: 100, duration: HOLD + COLUMN, ease: 'none', onUpdate: writeCount }, T_CARDS)
+
+    // 4. Cards drop into a column under the mark, then the background flips to white
+    cards.forEach((el, i) => {
+      const { h } = SIZES[PROJECTS[INTRO[i]].size]
+      tl.to(el, { y: -h / 2 + COLUMN_Y[i], duration: COLUMN, ease: 'expo.inOut' }, T_COLUMN)
+    })
+    tl.to(counter, { yPercent: -110, duration: FLIP, ease: 'power2.in' }, T_FLIP)
+    tl.to(bgRef.current, { opacity: 0, duration: FLIP, ease: 'none' }, T_FLIP)
+
+    // 5. Cards fly to their gallery slots while the mark opens into the frame
+    cards.forEach((el, i) => {
+      const c = INTRO_FINAL[i]
+      tl.to(el, { y: -c.h / 2 + c.dy, scale: c.scale, opacity: c.opacity, duration: SPREAD, ease: 'expo.inOut' }, T_SPREAD)
+    })
+    ghosts.forEach((el, i) => {
+      tl.to(el, { opacity: GHOSTS[i].opacity, duration: 0.8, ease: 'power1.out' }, T_SPREAD + SPREAD * 0.4)
+    })
+    tl.to(spread, {
+      p: 1,
+      duration: SPREAD,
+      ease: 'expo.inOut',
+      onUpdate: () => setShape(BRACKET, FRAME, spread.p),
+    }, T_SPREAD)
   }, [])
 
-  const SVG_SIZE = 280
-  const HALF     = SVG_SIZE / 2
+  return (
+    <>
+      {!done && (
+        <>
+          <div ref={bgRef} style={{ position: 'fixed', inset: 0, zIndex: 9996, backgroundColor: '#000' }} />
 
+          <div
+            className="fixed inset-0 flex items-center justify-center pointer-events-none"
+            style={{ zIndex: 9997 }}
+          >
+            <div className="relative w-0 h-0">
+              {GHOSTS.map((c, i) => (
+                <IntroCard key={`g${c.projIdx}`} projIdx={c.projIdx} centred={c.dist < 0.5} ref={el => { ghostRefs.current[i] = el }} />
+              ))}
+              {INTRO.map((p, i) => (
+                <IntroCard key={p} projIdx={p} centred={INTRO_FINAL[i].dist < 0.5} ref={el => { cardRefs.current[i] = el }} />
+              ))}
+            </div>
+          </div>
+
+          <div style={{
+            position: 'fixed',
+            right: 28,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 9999,
+            overflow: 'hidden',
+            color: '#fff',
+            mixBlendMode: 'difference',
+            fontSize: '1.3rem',
+            fontWeight: 500,
+            lineHeight: 1.2,
+            fontVariantNumeric: 'tabular-nums',
+            pointerEvents: 'none',
+          }}>
+            <div ref={counterRef}>00</div>
+          </div>
+        </>
+      )}
+
+      {/* The mark — a top-level fixed layer so difference blending reaches the cards and page below */}
+      <div style={{
+        position: 'fixed',
+        left: '50%',
+        top: '50%',
+        width: LOGO_PX,
+        height: LOGO_PX,
+        transform: 'translate(-50%, -50%)',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        color: '#fff',
+        mixBlendMode: 'difference',
+        opacity: frameHidden ? 0 : 1,
+        transition: 'opacity 0.6s ease',
+      }}>
+        <svg viewBox={`0 0 ${VB} ${VB}`} width="100%" height="100%" overflow="visible" fill="none">
+          {[0, 1].map(i => (
+            <path
+              key={`f${i}`}
+              ref={el => { fillRefs.current[i] = el }}
+              d={done ? FRAME_D[i] : GLOBE_D[i]}
+              fill="currentColor"
+              fillOpacity={done ? 1 : 0}
+            />
+          ))}
+          {!done && STROKE_D.map((d, i) => (
+            <path
+              key={`s${i}`}
+              ref={el => { strokeRefs.current[i] = el }}
+              d={d}
+              pathLength={1}
+              stroke="currentColor"
+              strokeWidth={3}
+              strokeDasharray="1"
+              strokeDashoffset="1"
+            />
+          ))}
+        </svg>
+      </div>
+    </>
+  )
+}
+
+// Same markup and styling as a ProjectGallery slot, so the hand-off is invisible
+function IntroCard({ projIdx, centred, ref }: { projIdx: number; centred: boolean; ref: React.Ref<HTMLDivElement> }) {
+  const project = PROJECTS[projIdx]
+  const { w, h } = SIZES[project.size]
   return (
     <div
-      ref={overlayRef}
-      style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'black', overflow: 'hidden' }}
+      ref={ref}
+      className="absolute top-0 left-0 overflow-hidden origin-center will-change-transform"
+      style={{ width: w, height: h, backgroundColor: project.color, transform: 'scale(0)' }}
     >
-      {/* ── images clipped to bracket ellipse ── */}
-      <div
-        ref={clipViewRef}
-        style={{
-          position: 'absolute', inset: 0,
-          clipPath: `ellipse(${CLIP_HW}px ${CLIP_HH}px at 50% 50%)`,
-          opacity: 0, overflow: 'hidden',
-        }}
-      >
-        {/* image-0 centre = screen centre at scroll 0 */}
-        <div style={{
-          position: 'absolute',
-          left: '50%', top: `calc(50% - ${IMG_H / 2}px)`,
-          transform: 'translateX(-50%)',
-        }}>
-          <div ref={columnRef} style={{ display: 'flex', flexDirection: 'column', gap: IMG_GAP }}>
-            {Array.from({ length: NUM_IMAGES }).map((_, i) => (
-              <div
-                key={i}
-                ref={el => { if (el) imgWrappers.current[i] = el }}
-                style={{
-                  width: IMG_W, height: IMG_H,
-                  backgroundColor: BG_COLORS[i],
-                  flexShrink: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <span style={{
-                  fontFamily: 'monospace', fontSize: 11,
-                  color: 'rgba(255,255,255,0.25)', letterSpacing: '0.12em',
-                }}>
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ── animated logo / bracket frame ── */}
-      <div
-        ref={logoWrapRef}
-        style={{
-          position: 'absolute', inset: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          pointerEvents: 'none',
-        }}
-      >
-        <svg width={SVG_SIZE} height={SVG_SIZE} viewBox="0 0 100 100" fill="none">
-          {/* outer circle — fades out during () → [] */}
-          <circle ref={circleRef} cx="50" cy="50" r="38" stroke="#c8c8c8" strokeWidth="1" />
-          {/* curved arcs — morph into straight bars */}
-          <path ref={arc1Ref} d={toD(OPEN_L)} stroke="#c8c8c8" strokeWidth="1" fill="none" />
-          <path ref={arc2Ref} d={toD(OPEN_R)} stroke="#c8c8c8" strokeWidth="1" fill="none" />
-          {/* horizontal bracket arms — fade in to complete [] */}
-          <path ref={topArmRef} d="M 24 12 L 76 12" stroke="white" strokeWidth="3" fill="none" opacity="0" />
-          <path ref={botArmRef} d="M 24 88 L 76 88" stroke="white" strokeWidth="3" fill="none" opacity="0" />
-        </svg>
-      </div>
-
-      {/* ── left split half (shows left [) ── */}
-      <div
-        ref={leftHalfRef}
-        style={{
-          position: 'absolute',
-          left: `calc(50% - ${HALF}px)`, top: `calc(50% - ${HALF}px)`,
-          width: HALF, height: SVG_SIZE,
-          overflow: 'hidden', opacity: 0, pointerEvents: 'none',
-        }}
-      >
-        <svg width={SVG_SIZE} height={SVG_SIZE} viewBox="0 0 100 100" fill="none">
-          <path d="M 24 12 Q 24 50 24 88" stroke="white" strokeWidth="3" fill="none" />
-          <path d="M 76 12 Q 76 50 76 88" stroke="white" strokeWidth="3" fill="none" />
-          <path d="M 24 12 L 76 12"       stroke="white" strokeWidth="3" fill="none" />
-          <path d="M 24 88 L 76 88"       stroke="white" strokeWidth="3" fill="none" />
-        </svg>
-      </div>
-
-      {/* ── right split half (shows right ]) ── */}
-      <div
-        ref={rightHalfRef}
-        style={{
-          position: 'absolute',
-          left: '50%', top: `calc(50% - ${HALF}px)`,
-          width: HALF, height: SVG_SIZE,
-          overflow: 'hidden', opacity: 0, pointerEvents: 'none',
-        }}
-      >
-        <svg style={{ marginLeft: -HALF }} width={SVG_SIZE} height={SVG_SIZE} viewBox="0 0 100 100" fill="none">
-          <path d="M 24 12 Q 24 50 24 88" stroke="white" strokeWidth="3" fill="none" />
-          <path d="M 76 12 Q 76 50 76 88" stroke="white" strokeWidth="3" fill="none" />
-          <path d="M 24 12 L 76 12"       stroke="white" strokeWidth="3" fill="none" />
-          <path d="M 24 88 L 76 88"       stroke="white" strokeWidth="3" fill="none" />
-        </svg>
-      </div>
-
-      {/* ── scroll hint ── */}
-      <div
-        ref={hintRef}
-        style={{
-          position: 'absolute', bottom: 52, left: '50%',
-          transform: 'translateX(-50%)', opacity: 0,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-          pointerEvents: 'none',
-        }}
-      >
-        <span style={{
-          fontFamily: 'monospace', fontSize: 10,
-          color: 'rgba(255,255,255,0.35)', letterSpacing: '0.15em',
-        }}>
-          SCROLL
-        </span>
-        <svg width="10" height="16" viewBox="0 0 10 16" fill="none">
-          <line x1="5" y1="0" x2="5" y2="14" stroke="rgba(255,255,255,0.3)" strokeWidth="1" />
-          <polyline points="1,10 5,14 9,10" stroke="rgba(255,255,255,0.3)" strokeWidth="1" fill="none" />
-        </svg>
-      </div>
-
-      {/* ── counter ── */}
-      <div style={{ position: 'absolute', bottom: 24, right: 24 }}>
+      {project.image && <img src={project.image} alt="" className="w-full h-full object-cover" />}
+      <div className="absolute inset-0 flex items-end p-4">
         <span
-          ref={counterRef}
-          style={{ fontFamily: 'monospace', fontSize: 13, color: 'white', lineHeight: 1 }}
+          className="font-mono text-[11px] tracking-[0.12em]"
+          style={{ color: centred ? '#FF6B00' : 'rgba(255,255,255,0.2)', fontWeight: centred ? 700 : 400 }}
         >
-          0
+          {String(project.id).padStart(2, '0')}
         </span>
       </div>
     </div>
